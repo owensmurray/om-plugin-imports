@@ -66,7 +66,9 @@ typeCheckResultActionImpl
   -> TcGblEnv
   -> TcM TcGblEnv
 typeCheckResultActionImpl args modSummary env = do
-  liftIO (putStrLn ("Generating imports for file: " <> ms_hspp_file modSummary))
+  liftIO . putStrLn $
+    "Generating imports for file: "
+    <> ms_hspp_file modSummary
   let options = parseOptions args
   used <- getUsedImports env
   flags <- getDynFlags
@@ -116,7 +118,11 @@ getUsedImports env = do
         | (m, ibs)
             <- moduleEnvToList . imp_mods . tcg_imports $ env
         , ImportedByUser imv <- ibs
-        , GRE { gre_name = name } <- concat . nonDetOccEnvElts . imv_all_exports $ imv
+        , GRE { gre_name = name } <-
+            concat
+            . nonDetOccEnvElts
+            . imv_all_exports
+            $ imv
         ]
 
     used :: Map ModuleImport (Map Name (Set Name))
