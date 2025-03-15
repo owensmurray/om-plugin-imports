@@ -18,6 +18,7 @@ import Data.IORef (readIORef)
 import Data.List (intercalate)
 import Data.Map (Map)
 import Data.Set (Set, member)
+import Data.Time (diffUTCTime, getCurrentTime)
 import GHC (ModSummary(ms_hspp_file), DynFlags, ModuleName, Name, moduleName)
 import GHC.Data.Bag (bagToList)
 import GHC.Plugins
@@ -38,8 +39,8 @@ import GHC.Unit.Module.Imported
 import Prelude
   ( Applicative(pure), Bool(False, True), Eq((==)), Foldable(elem)
   , Maybe(Just, Nothing), Monoid(mempty), Num((+)), Ord((>)), Semigroup((<>))
-  , ($), (.), (<$>), (||), FilePath, Int, String, concat, otherwise, putStrLn
-  , unlines, writeFile
+  , Show(show), ($), (.), (<$>), (||), FilePath, Int, String, concat, otherwise
+  , putStr, putStrLn, unlines, writeFile
   )
 import Safe (headMay)
 import qualified Data.Char as Char
@@ -66,13 +67,17 @@ typeCheckResultActionImpl
   -> TcGblEnv
   -> TcM TcGblEnv
 typeCheckResultActionImpl args modSummary env = do
-  liftIO . putStrLn $
+  startTime <- liftIO getCurrentTime
+  liftIO . putStr $
     "Generating imports for file: "
     <> ms_hspp_file modSummary
+    <> "..."
   let options = parseOptions args
   used <- getUsedImports env
   flags <- getDynFlags
   void $ writeToDumpFile options (ms_hspp_file modSummary) flags used
+  endTime <- liftIO getCurrentTime
+  liftIO (putStrLn (" in " <> show (diffUTCTime endTime startTime)))
   pure env
 
 
