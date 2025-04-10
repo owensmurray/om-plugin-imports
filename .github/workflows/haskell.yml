@@ -8,9 +8,8 @@ jobs:
       fail-fast: false
       matrix:
         ghc-version:
-          - '9.8'
-          - '9.10'
-        cabal-version: ['3.12.1.0']
+          - '9.12'
+        cabal-version: ['3.14.1.1']
     steps:
       # Checkout
       - uses: actions/checkout@v3
@@ -66,8 +65,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc-version: ['9.8.1']
-        cabal-version: ['3.10.2.0']
+        ghc-version: ['9.12.1']
+        cabal-version: ['3.14.1.1']
     steps:
       # Checkout
       - uses: actions/checkout@v3
@@ -87,11 +86,11 @@ jobs:
           (cat << EOF
           packages: .
           constraints:
-            base == 4.19.0.0,
-            containers == 0.6.8,
-            ghc == 9.8.1,
-            safe == 0.3.19
-          EOF
+            base == 4.21.0.0,
+            containers == 0.7,
+            ghc == 9.12.1,
+            safe == 0.3.21,
+            time == 1.14
           ) > cabal.project
           rm cabal.project.freeze
           cabal configure
