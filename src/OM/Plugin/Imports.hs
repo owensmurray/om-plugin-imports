@@ -27,8 +27,7 @@ import GHC.Plugins
   , Outputable(ppr), Parent(NoParent, ParentIs)
   , Plugin(pluginRecompile, typeCheckResultAction)
   , PluginRecompile(NoForceRecompile), CommandLineOption, GlobalRdrElt
-  , bestImport, defaultPlugin, liftIO, moduleEnvToList, nonDetOccEnvElts
-  , showSDoc
+  , bestImport, defaultPlugin, liftIO, nonDetOccEnvElts, showSDoc
   )
 import GHC.Tc.Utils.Monad
   ( ImportAvails(imp_mods), TcGblEnv(tcg_imports, tcg_used_gres), MonadIO, TcM
@@ -121,7 +120,7 @@ getUsedImports env = do
             (moduleName m)
             (Set.singleton name)
         | (m, ibs)
-            <- moduleEnvToList . imp_mods . tcg_imports $ env
+            <- Map.toList . imp_mods . tcg_imports $ env
         , ImportedByUser imv <- ibs
         , GRE { gre_name = name } <-
             concat
