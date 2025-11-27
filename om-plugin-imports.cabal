@@ -1,6 +1,6 @@
 cabal-version:       3.0
 name:                om-plugin-imports
-version:             0.4.0.1.9.12
+version:             0.4.0.2.9.12
 synopsis:            Plugin-based explicit import generation.
 description:         See the README at https://github.com/owensmurray/om-plugin-imports/tree/master/#om-plugin-imports
 homepage:            https://github.com/owensmurray/om-plugin-imports
@@ -40,4 +40,17 @@ library
   hs-source-dirs:      src
   default-language:    Haskell2010
 
-
+test-suite om-plugin-imports-test
+  import: dependencies, warnings
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      tests
+  default-language:    Haskell2010
+  main-is:             main.hs
+  build-depends:
+    , om-plugin-imports
+    , directory
+    , filepath
+    , text
+    , tasty
+    , tasty-golden
+    , process

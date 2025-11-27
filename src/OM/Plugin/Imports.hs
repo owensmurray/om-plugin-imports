@@ -20,6 +20,8 @@ import Data.Map (Map)
 import Data.Set (Set, member)
 import Data.Time (diffUTCTime, getCurrentTime)
 import GHC (ModSummary(ms_hspp_file), DynFlags, ModuleName, Name, moduleName)
+import GHC.Types.TyThing (TyThing(AConLike))
+import GHC.Core.ConLike (ConLike(PatSynCon))
 import GHC.Data.Bag (bagToList)
 import GHC.Plugins
   ( GlobalRdrEltX(GRE, gre_imp, gre_name, gre_par), HasDynFlags(getDynFlags)
@@ -29,8 +31,10 @@ import GHC.Plugins
   , PluginRecompile(NoForceRecompile), CommandLineOption, GlobalRdrElt
   , bestImport, defaultPlugin, liftIO, nonDetOccEnvElts, showSDoc
   )
+import GHC.Tc.Utils.Env (tcLookupGlobal)
 import GHC.Tc.Utils.Monad
   ( ImportAvails(imp_mods), TcGblEnv(tcg_imports, tcg_used_gres), MonadIO, TcM
+  , recoverM
   )
 import GHC.Unit.Module.Imported
   ( ImportedBy(ImportedByUser), ImportedModsVal(imv_all_exports)
@@ -39,7 +43,7 @@ import Prelude
   ( Applicative(pure), Bool(False, True), Eq((==)), Foldable(elem)
   , Maybe(Just, Nothing), Monoid(mempty), Num((+)), Ord((>)), Semigroup((<>))
   , Show(show), ($), (.), (<$>), (||), FilePath, Int, String, concat, otherwise
-  , putStr, putStrLn, unlines, writeFile
+  , putStr, putStrLn, unlines, writeFile, mapM
   )
 import Safe (headMay)
 import qualified Data.Char as Char
@@ -85,7 +89,7 @@ writeToDumpFile
   => Options
   -> FilePath
   -> DynFlags
-  -> Map ModuleImport (Map Name (Set Name))
+  -> Map ModuleImport (Map WrappedName (Set WrappedName))
   -> m (Maybe FilePath)
 writeToDumpFile options srcFile flags used =
   liftIO $ do
@@ -97,12 +101,10 @@ writeToDumpFile options srcFile flags used =
 
 
 getUsedImports
-  :: forall m.
-     (MonadIO m)
-  => TcGblEnv
-  -> m (Map ModuleImport (Map Name (Set Name)))
+  :: TcGblEnv
+  -> TcM (Map ModuleImport (Map WrappedName (Set WrappedName)))
 getUsedImports env = do
-  rawUsed <- (liftIO . readIORef) (tcg_used_gres env) :: m [GlobalRdrElt]
+  rawUsed <- (liftIO . readIORef) (tcg_used_gres env) :: TcM [GlobalRdrElt]
   let
     {-
       Sometimes, the module from which the name is imported may not
@@ -129,73 +131,83 @@ getUsedImports env = do
             $ imv
         ]
 
-    used :: Map ModuleImport (Map Name (Set Name))
-    used =
-      Map.unionsWith
-        (Map.unionWith Set.union)
-        [ let
-            imp :: ImportSpec
-            imp = bestImport (NonEmpty.fromList (bagToList imps))
+  usedList <-
+    let
+      mkImport :: GlobalRdrElt -> TcM (ModuleImport, Map WrappedName (Set WrappedName))
+      mkImport GRE { gre_name = name, gre_par = parent, gre_imp = imps } = do
+        -- Check if the name is a pattern synonym
+        isPat <- isPatternSynonym name
+        let wrappedName = WrappedName name isPat
 
-            modName :: ModuleName
-            modImport :: ModuleImport
-            (modImport, modName) =
-              let
-                ImpDeclSpec
-                    { is_mod = moduleName -> is_mod
-                    , is_as
-                    , is_qual
-                    }
-                  = is_decl imp
-              in
-                ( case (is_qual, is_as == is_mod) of
-                    (True, True)   -> Qualified is_mod
-                    (True, False)  -> QualifiedAs is_mod is_as
-                    (False, True)  -> Unqualified is_mod
-                    (False, False) -> UnqualifiedAs is_mod is_as
-                , is_mod
-                )
-          in
-            Map.singleton
-              modImport
-              (
-                let
-                  {-
-                    Figure out if we need to omit the parent name because
-                    it isn't exported by the module from which the name
-                    itself is imported.
-                  -}
-                  withPossibleParent :: Name -> Map Name (Set Name)
-                  withPossibleParent parentName =
-                    if
-                      Set.member parentName $
-                        Map.findWithDefault
-                          mempty
-                          modName
-                          availableParents
-                    then
-                      Map.singleton parentName (Set.singleton name)
-                    else
-                      noParent
+        let
+          imp :: ImportSpec
+          imp = bestImport (NonEmpty.fromList (bagToList imps))
 
-                  noParent :: Map Name (Set Name)
-                  noParent = Map.singleton name mempty
-                in
-                  case parent of
-                    NoParent -> noParent
-                    ParentIs parentName ->
-                      withPossibleParent parentName
+          modName :: ModuleName
+          modImport :: ModuleImport
+          (modImport, modName) =
+            let
+              ImpDeclSpec
+                  { is_mod = moduleName -> is_mod
+                  , is_as
+                  , is_qual
+                  }
+                = is_decl imp
+            in
+              ( case (is_qual, is_as == is_mod) of
+                  (True, True)   -> Qualified is_mod
+                  (True, False)  -> QualifiedAs is_mod is_as
+                  (False, True)  -> Unqualified is_mod
+                  (False, False) -> UnqualifiedAs is_mod is_as
+              , is_mod
               )
-        | GRE
-            { gre_name
-            , gre_par = parent
-            , gre_imp = imps
-            } <- rawUsed
-        , let
-            name :: Name
-            name = gre_name
-        ]
-  pure used
+
+          {-
+            Figure out if we need to omit the parent name because
+            it isn't exported by the module from which the name
+            itself is imported.
+          -}
+          withPossibleParent :: Name -> Map WrappedName (Set WrappedName)
+          withPossibleParent parentName =
+            if
+              Set.member parentName $
+                Map.findWithDefault
+                  mempty
+                  modName
+                  availableParents
+            then
+              -- For parents, we assume they are not pattern synonyms (usually types/classes).
+              -- Even if they are, 'pattern' keyword logic for parent might differ.
+              -- But parent names in imports usually don't take 'pattern'.
+              -- (e.g. import M (T(..))). T is parent.
+              Map.singleton
+                (WrappedName parentName False)
+                (Set.singleton wrappedName)
+            else
+              noParent
+
+          noParent :: Map WrappedName (Set WrappedName)
+          noParent = Map.singleton wrappedName mempty
+
+        pure
+          ( modImport
+          , case parent of
+              NoParent -> noParent
+              ParentIs parentName -> withPossibleParent parentName
+          )
+    in
+      mapM mkImport rawUsed
+
+  pure $ Map.unionsWith (Map.unionWith Set.union) [Map.singleton k v | (k, v) <- usedList]
+
+
+isPatternSynonym :: Name -> TcM Bool
+isPatternSynonym name = do
+  maybeThing <- recoverM (pure Nothing) (Just <$> tcLookupGlobal name)
+  pure $ case maybeThing of
+    Just (AConLike (PatSynCon _)) -> True
+    _ -> False
+
 
 
 data ModuleImport
@@ -216,10 +228,18 @@ data ModuleImport
   deriving stock (Eq, Ord)
 
 
+data WrappedName = WrappedName Name Bool
+  deriving stock (Eq, Ord)
+
+
+instance Outputable WrappedName where
+  ppr (WrappedName n _) = ppr n
+
+
 renderNewImports
   :: Options
   -> DynFlags
-  -> Map ModuleImport (Map Name (Set Name))
+  -> Map ModuleImport (Map WrappedName (Set WrappedName))
   -> String
 renderNewImports options flags used =
     unlines
@@ -239,7 +259,7 @@ renderNewImports options flags used =
       | (modImport, parents) <- Map.toAscList used
       ]
   where
-    maybeShowList :: ModuleName -> Map Name (Set Name) -> String
+    maybeShowList :: ModuleName -> Map WrappedName (Set WrappedName) -> String
     maybeShowList modName parents =
       if options.excessive || modName `member` ambiguousNames
         then " (" <> showParents parents <> ")"
@@ -258,19 +278,24 @@ renderNewImports options flags used =
         | (modImport, _) <- Map.toAscList used
         ]
 
-    showParents :: Map Name (Set Name) -> String
+    showParents :: Map WrappedName (Set WrappedName) -> String
     showParents parents =
       intercalate ", "
-        [ shown parent <> showChildren children
+        [ shownWrapped parent <> showChildren children
         | (parent, children) <- Map.toList parents
         ]
 
-    showChildren :: Set Name -> String
+    showChildren :: Set WrappedName -> String
     showChildren children =
       if Set.null children then
         ""
       else
-        "(" <> intercalate ", " (shown <$> Set.toAscList children) <> ")"
+        "(" <> intercalate ", " (shownWrapped <$> Set.toAscList children) <> ")"
+
+    shownWrapped :: WrappedName -> String
+    shownWrapped (WrappedName name isPat) =
+      let s = shown name in
+      if isPat then "pattern " <> s else s
 
     shown :: Outputable o => o -> String
     shown = fixInlineName . showSDoc flags . ppr
