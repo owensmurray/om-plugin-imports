@@ -1,0 +1,2 @@
+import PatternSynonymDef (pattern MyPattern)
+import Prelude (Bool(False, True), Int)
