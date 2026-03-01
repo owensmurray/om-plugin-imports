@@ -17,11 +17,11 @@ extra-source-files:
 
 common dependencies
   build-depends:
-    , base       >= 4.21.0.0 && < 4.22
-    , containers >= 0.7      && < 0.8
-    , ghc        >= 9.12.1   && < 9.13
+    , base       >= 4.21.0.0 && < 4.23
+    , containers >= 0.7      && < 0.9
+    , ghc        >= 9.12.1   && < 9.15
     , safe       >= 0.3.21   && < 0.4
-    , time       >= 1.14     && < 1.15
+    , time       >= 1.14     && < 1.16
 
 common warnings
   ghc-options:

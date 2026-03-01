@@ -8,7 +8,7 @@ jobs:
       fail-fast: false
       matrix:
         ghc-version:
-          - '9.12'
+          - '9.14'
         cabal-version: ['3.14.1.1']
     steps:
       # Checkout
@@ -91,6 +91,7 @@ jobs:
             ghc == 9.12.1,
             safe == 0.3.21,
             time == 1.14
+          EOF
           ) > cabal.project
           rm cabal.project.freeze
           cabal configure
