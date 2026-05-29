@@ -26,8 +26,10 @@ This is _almost_ what `-ddump-minimal-imports` does, but
 
 ## Options
 
-The plugin supports the following option:
+The plugin supports the following options:
 
 * `excessive`: Output the import list even on unambiguous qualified imports.
+* `in-place`: Replace the module's import declarations with the canonical
+  import list instead of writing a separate `<src-file>.full-imports` file.
 
 

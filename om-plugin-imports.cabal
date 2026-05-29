@@ -1,6 +1,6 @@
 cabal-version:       3.0
 name:                om-plugin-imports
-version:             0.4.0.2.9.14
+version:             0.4.1.0.9.14
 synopsis:            Plugin-based explicit import generation.
 description:         See the README at https://github.com/owensmurray/om-plugin-imports/tree/master/#om-plugin-imports
 homepage:            https://github.com/owensmurray/om-plugin-imports
@@ -8,11 +8,12 @@ license:             MIT
 license-file:        LICENSE
 author:              Rick Owens
 maintainer:          rick@owensmurray.com
-copyright:           2025 Rick Owens
+copyright:           2026 Rick Owens
 category:            Compiler Plugin
 build-type:          Simple
 extra-source-files:
   README.md
+  CHANGELOG.md
   LICENSE
 
 common dependencies

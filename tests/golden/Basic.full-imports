@@ -1,2 +1,3 @@
-import Data.Maybe (mapMaybe)
-import Prelude (Num((+)), Foldable(foldl'), Int, Maybe, id)
+import Data.List (intercalate)
+import Data.Maybe (catMaybes, mapMaybe)
+import Prelude (Num((+)), Foldable(foldl'), Char, Int, Maybe, id)

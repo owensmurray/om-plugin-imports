@@ -1,14 +1,8 @@
 module Basic where
 
-import Data.List
-  ( foldl'
-  , intercalate
-  )
-import Data.Maybe
-  ( catMaybes
-  , mapMaybe
-  )
-
+import Data.List (intercalate)
+import Data.Maybe (catMaybes, mapMaybe)
+import Prelude (Num((+)), Foldable(foldl'), Char, Int, Maybe, id)
 
 foo :: [Int] -> Int
 foo = foldl' (+) 0

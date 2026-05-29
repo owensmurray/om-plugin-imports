@@ -12,15 +12,14 @@ module OM.Plugin.Imports (
   plugin,
 ) where
 
-
+import Control.Exception (evaluate)
 import Control.Monad (void)
 import Data.IORef (readIORef)
 import Data.List (intercalate)
 import Data.Map (Map)
 import Data.Set (Set, member)
 import Data.Time (diffUTCTime, getCurrentTime)
-import GHC (ModSummary(ms_hspp_file), DynFlags, ModuleName, Name, moduleName)
-import GHC.Types.TyThing (TyThing(AConLike))
+import GHC (DynFlags, ModSummary(ms_hspp_file), ModuleName, Name, moduleName)
 import GHC.Core.ConLike (ConLike(PatSynCon))
 import GHC.Data.Bag (bagToList)
 import GHC.Plugins
@@ -36,17 +35,21 @@ import GHC.Tc.Utils.Monad
   ( ImportAvails(imp_mods), TcGblEnv(tcg_imports, tcg_used_gres), MonadIO, TcM
   , recoverM
   )
+import GHC.Types.TyThing (TyThing(AConLike))
 import GHC.Unit.Module.Imported
   ( ImportedBy(ImportedByUser), ImportedModsVal(imv_all_exports)
   )
 import Prelude
   ( Applicative(pure), Bool(False, True), Eq((==)), Foldable(elem)
-  , Maybe(Just, Nothing), Monoid(mempty), Num((+)), Ord((>)), Semigroup((<>))
-  , Show(show), ($), (.), (<$>), (||), FilePath, Int, String, concat, otherwise
-  , putStr, putStrLn, unlines, writeFile, mapM
+  , Maybe(Just, Nothing), Monoid(mempty), Num((+), (-)), Ord((>), (<=))
+  , Semigroup((<>)), Show(show), ($), (.), (<$>), (&&), (||), FilePath
+  , Int, String, break, concat, dropWhile, filter, length, lines, mapM, not
+  , otherwise, putStr, putStrLn, readFile, reverse, span, unlines, words
+  , writeFile
   )
 import Safe (headMay)
 import qualified Data.Char as Char
+import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -59,8 +62,9 @@ plugin = defaultPlugin
   }
 
 
-newtype Options = Options
+data Options = Options
   { excessive :: Bool
+  ,   inPlace :: Bool
   }
 
 
@@ -78,26 +82,177 @@ typeCheckResultActionImpl args modSummary env = do
   let options = parseOptions args
   used <- getUsedImports env
   flags <- getDynFlags
-  void $ writeToDumpFile options (ms_hspp_file modSummary) flags used
+  void $ writeCanonicalImports options (ms_hspp_file modSummary) flags used
   endTime <- liftIO getCurrentTime
   liftIO (putStrLn (" in " <> show (diffUTCTime endTime startTime)))
   pure env
 
 
-writeToDumpFile
+writeCanonicalImports
   :: (MonadIO m)
   => Options
   -> FilePath
   -> DynFlags
   -> Map ModuleImport (Map WrappedName (Set WrappedName))
   -> m (Maybe FilePath)
-writeToDumpFile options srcFile flags used =
+writeCanonicalImports options srcFile flags used =
   liftIO $ do
     let
+      imports :: String
+      imports = renderNewImports options flags used
+
       filename :: FilePath
       filename = srcFile <> ".full-imports"
-    writeFile filename (renderNewImports options flags used)
-    pure (Just filename)
+    if options.inPlace then do
+      src <- readFile srcFile
+      let
+        updatedSrc :: String
+        updatedSrc = replaceImportBlock imports src
+      void (evaluate (length updatedSrc))
+      writeFile srcFile updatedSrc
+      pure Nothing
+    else do
+      writeFile filename imports
+      pure (Just filename)
+
+
+replaceImportBlock :: String -> String -> String
+replaceImportBlock imports src =
+  let
+    importLines :: [String]
+    importLines = lines imports
+
+    srcLines :: [String]
+    srcLines = lines src
+
+    (prefix, rest) = break isImportStart srcLines
+
+    lines_ :: [String]
+    lines_ =
+      if not (List.null rest) then
+        trimTrailingBlank prefix
+        <> [""]
+        <> importLines
+        <> [""]
+        <> dropLeadingBlank (dropImportBlock rest)
+      else
+        insertImportBlock importLines srcLines
+  in
+    unlines lines_
+
+
+dropImportBlock :: [String] -> [String]
+dropImportBlock [] = []
+dropImportBlock importLineRest =
+  let
+    afterImport :: [String]
+    afterImport = dropOneImport importLineRest
+
+    between :: [String]
+    afterBetween :: [String]
+    (between, afterBetween) = span isBlankOrComment afterImport
+  in
+    case afterBetween of
+      line : _
+        | isImportStart line ->
+            dropImportBlock afterBetween
+      _ ->
+        between <> afterBetween
+
+
+dropOneImport :: [String] -> [String]
+dropOneImport [] = []
+dropOneImport (line : rest) =
+  let
+    balance :: Int
+    balance = parenDelta line
+  in
+    if balance <= 0 && not (continuesOnNextLine rest) then
+      rest
+    else
+      dropImportContinuation balance rest
+
+
+dropImportContinuation :: Int -> [String] -> [String]
+dropImportContinuation _ [] = []
+dropImportContinuation balance (line : rest) =
+  let
+    balance_ :: Int
+    balance_ = balance + parenDelta line
+  in
+    if balance_ <= 0 && not (continuesOnNextLine rest) then
+      rest
+    else
+      dropImportContinuation balance_ rest
+
+
+continuesOnNextLine :: [String] -> Bool
+continuesOnNextLine [] = False
+continuesOnNextLine (line : _) =
+  case line of
+    [] ->
+      False
+    c : _ ->
+      Char.isSpace c
+
+
+insertImportBlock :: [String] -> [String] -> [String]
+insertImportBlock importLines srcLines =
+  let
+    (prefix, suffix) = break hasModuleWhere srcLines
+  in
+    case suffix of
+      [] ->
+        importLines <> [""] <> srcLines
+      moduleWhereLine : rest ->
+        prefix
+        <> [moduleWhereLine]
+        <> [""]
+        <> importLines
+        <> [""]
+        <> dropLeadingBlank rest
+
+
+isImportStart :: String -> Bool
+isImportStart line =
+  let
+    line_ :: String
+    line_ = dropWhile Char.isSpace line
+  in
+    "import " `List.isPrefixOf` line_
+    || "import\t" `List.isPrefixOf` line_
+
+
+isBlankOrComment :: String -> Bool
+isBlankOrComment line =
+  let
+    line_ :: String
+    line_ = dropWhile Char.isSpace line
+  in
+    List.null line_
+    || "--" `List.isPrefixOf` line_
+    || "{-" `List.isPrefixOf` line_
+
+
+hasModuleWhere :: String -> Bool
+hasModuleWhere line =
+  "where" `elem` words line
+
+
+parenDelta :: String -> Int
+parenDelta line =
+  length (filter (== '(') line)
+  - length (filter (== ')') line)
+
+
+trimTrailingBlank :: [String] -> [String]
+trimTrailingBlank =
+  reverse . dropWhile (List.null . dropWhile Char.isSpace) . reverse
+
+
+dropLeadingBlank :: [String] -> [String]
+dropLeadingBlank =
+  dropWhile (List.null . dropWhile Char.isSpace)
 
 
 getUsedImports
@@ -313,6 +468,7 @@ parseOptions :: [CommandLineOption] -> Options
 parseOptions args =
   Options
     { excessive = "excessive" `elem` args
+    ,   inPlace = "in-place" `elem` args
     }
 
 
