@@ -15,7 +15,7 @@ module OM.Plugin.Imports (
 import Control.Exception (evaluate)
 import Control.Monad (void)
 import Data.IORef (readIORef)
-import Data.List (intercalate)
+import Data.List (intercalate, sortOn)
 import Data.Map (Map)
 import Data.Set (Set, member)
 import Data.Time (diffUTCTime, getCurrentTime)
@@ -437,7 +437,8 @@ renderNewImports options flags used =
     showParents parents =
       intercalate ", "
         [ shownWrapped parent <> showChildren children
-        | (parent, children) <- Map.toList parents
+        | (parent, children) <-
+            sortOn (\(parent_, _) -> shownWrapped parent_) (Map.toList parents)
         ]
 
     showChildren :: Set WrappedName -> String
@@ -445,7 +446,11 @@ renderNewImports options flags used =
       if Set.null children then
         ""
       else
-        "(" <> intercalate ", " (shownWrapped <$> Set.toAscList children) <> ")"
+        let
+          sorted :: [WrappedName]
+          sorted = sortOn shownWrapped (Set.toList children)
+        in
+          "(" <> intercalate ", " (shownWrapped <$> sorted) <> ")"
 
     shownWrapped :: WrappedName -> String
     shownWrapped (WrappedName name isPat) =
