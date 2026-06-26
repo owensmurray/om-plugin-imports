@@ -2,15 +2,26 @@
 module Main (main) where
 
 import Control.Monad (void)
-import GHC (guessTarget, runGhc, setSessionDynFlags, setTargets, load, getSessionDynFlags, DynFlags(backend, ghcLink, importPaths), GhcLink(NoLink), LoadHowMuch(LoadAllTargets), GhcMonad(getSession, setSession))
+import GHC
+  ( DynFlags(backend, ghcLink, importPaths), GhcLink(NoLink)
+  , GhcMonad(getSession, setSession), LoadHowMuch(LoadAllTargets)
+  , getSessionDynFlags, guessTarget, load, runGhc, setSessionDynFlags
+  , setTargets
+  )
 import GHC.Driver.Backend (noBackend)
 import GHC.Driver.Env (HscEnv(hsc_plugins))
-import GHC.Driver.Plugins (PluginWithArgs(PluginWithArgs), Plugins(staticPlugins), StaticPlugin(StaticPlugin, spInitialised, spPlugin))
-import Prelude (($), Monad(return), Semigroup((<>)), Bool(False, True), String, Maybe(Nothing, Just), IO, init, FilePath)
+import GHC.Driver.Plugins
+  ( PluginWithArgs(PluginWithArgs), Plugins(staticPlugins)
+  , StaticPlugin(StaticPlugin, spInitialised, spPlugin)
+  )
+import Prelude
+  ( Bool(False, True), Maybe(Just, Nothing), Monad(return), Semigroup((<>)), ($)
+  , FilePath, IO, String, init
+  )
 import System.Directory (copyFile, createDirectoryIfMissing)
 import System.FilePath ((<.>), (</>), takeBaseName, takeDirectory, takeFileName)
 import System.Process (readProcess)
-import Test.Tasty (defaultMain, testGroup, TestTree)
+import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.Golden (goldenVsFileDiff)
 import qualified OM.Plugin.Imports as Plugin
 

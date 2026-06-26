@@ -18,20 +18,49 @@ import Data.IORef (readIORef)
 import Data.Map (Map)
 import Data.Set (Set, member)
 import Data.Time (diffUTCTime, getCurrentTime)
-import GHC (DynFlags, Name, ModSummary(ms_hspp_file), moduleName, ModuleName)
+import GHC (ModSummary(ms_hspp_file), DynFlags, ModuleName, Name, moduleName)
 import GHC.Core.ConLike (ConLike(PatSynCon))
 import GHC.Data.Bag (bagToList)
 import GHC.Hs.Extension (GhcRn)
-import GHC.Hs.ImpExp (isImportDeclQualified, XImportDeclPass(XImportDeclPass, ideclImplicit), ImportDecl(ideclAs, ideclExt, ideclImportList, ideclName, ideclQualified), LImportDecl)
-import GHC.Plugins (Plugin(pluginRecompile, typeCheckResultAction), Outputable(ppr), defaultPlugin, showSDoc, nonDetOccEnvElts, bestImport, HasDynFlags(getDynFlags), CommandLineOption, PluginRecompile(NoForceRecompile), GlobalRdrElt, GlobalRdrEltX(GRE, gre_imp, gre_name, gre_par), ImpDeclSpec(ImpDeclSpec, is_as, is_mod, is_qual), ImportSpec(is_decl), Parent(NoParent, ParentIs), liftIO)
+import GHC.Hs.ImpExp
+  ( ImportDecl(ideclAs, ideclExt, ideclImportList, ideclName, ideclQualified)
+  , XImportDeclPass(XImportDeclPass, ideclImplicit), LImportDecl
+  , isImportDeclQualified
+  )
+import GHC.Plugins
+  ( GlobalRdrEltX(GRE, gre_imp, gre_name, gre_par), HasDynFlags(getDynFlags)
+  , ImpDeclSpec(ImpDeclSpec, is_as, is_mod, is_qual), ImportSpec(is_decl)
+  , Outputable(ppr), Parent(NoParent, ParentIs)
+  , Plugin(pluginRecompile, typeCheckResultAction)
+  , PluginRecompile(NoForceRecompile), CommandLineOption, GlobalRdrElt
+  , bestImport, defaultPlugin, liftIO, nonDetOccEnvElts, showSDoc
+  )
 import GHC.Tc.Utils.Env (tcLookupGlobal)
-import GHC.Tc.Utils.Monad (MonadIO, recoverM, TcGblEnv(tcg_imports, tcg_rn_imports, tcg_used_gres), TcM, ImportAvails(imp_mods))
+import GHC.Tc.Utils.Monad
+  ( ImportAvails(imp_mods), TcGblEnv(tcg_imports, tcg_rn_imports, tcg_used_gres)
+  , MonadIO, TcM, recoverM
+  )
 import GHC.Types.SrcLoc (unLoc)
 import GHC.Types.TyThing (TyThing(AConLike))
-import GHC.Unit.Module.Imported (ImportedBy(ImportedByUser), ImportedModsVal(imv_all_exports))
-import Language.Haskell.Syntax.ImpExp (ImportDecl(ImportDecl), ImportListInterpretation(Exactly))
-import OM.Plugin.Imports.Format (buildPartialImportList, formatImportBlock, parentImportEntry, GroupKeyType, ImportList(OpenImport), ImportStmt(ImportStmt), ImportStmtHead(ImportStmtHead))
-import Prelude (filter, otherwise, ($), Eq((==)), Num((-), (+)), Ord((>), (<=)), Show(show), Applicative(pure), Foldable(elem, foldr, length), Traversable(mapM), Semigroup((<>)), Monoid(mempty), Bool(False, True), String, Int, Maybe(Nothing, Just), unlines, (&&), not, (||), concat, lines, words, break, dropWhile, reverse, span, (.), (<$>), maybe, putStr, putStrLn, readFile, writeFile, FilePath)
+import GHC.Unit.Module.Imported
+  ( ImportedBy(ImportedByUser), ImportedModsVal(imv_all_exports)
+  )
+import Language.Haskell.Syntax.ImpExp
+  ( ImportDecl(ImportDecl), ImportListInterpretation(Exactly)
+  )
+import OM.Plugin.Imports.Format
+  ( ImportList(OpenImport), ImportStmt(ImportStmt)
+  , ImportStmtHead(ImportStmtHead), GroupKeyType, buildPartialImportList
+  , formatImportBlock, parentImportEntry
+  )
+import Prelude
+  ( Applicative(pure), Bool(False, True), Eq((==))
+  , Foldable(elem, foldr, length), Maybe(Just, Nothing), Monoid(mempty)
+  , Num((+), (-)), Ord((<=), (>)), Semigroup((<>)), Show(show)
+  , Traversable(mapM), ($), (&&), (.), (<$>), (||), FilePath, Int, String, break
+  , concat, dropWhile, filter, lines, maybe, not, otherwise, putStr, putStrLn
+  , readFile, reverse, span, unlines, words, writeFile
+  )
 import Safe (headMay)
 import qualified Data.Char as Char
 import qualified Data.List as List

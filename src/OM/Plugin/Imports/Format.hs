@@ -16,10 +16,14 @@ import Data.Bool (bool)
 import Data.List (intercalate, sortOn)
 import Data.Map (Map)
 import Data.Set (Set)
+import Prelude
+  ( Bool(False, True), Either(Left, Right), Foldable(length, null), Num((+))
+  , Ord((>), compare), Semigroup((<>)), (.), (<$>), Eq, Int, Maybe, Show, String
+  , concatMap, either, id, map, maybe, otherwise, uncurry, unlines
+  )
 import Text.Printf (printf)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-
 
 data ImportStmtHead = ImportStmtHead
   { importStmtHeadQualified  :: Bool
