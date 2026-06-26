@@ -15,13 +15,18 @@ module OM.Plugin.Imports (
 import Control.Exception (evaluate)
 import Control.Monad (void)
 import Data.IORef (readIORef)
-import Data.List (intercalate, sortOn)
 import Data.Map (Map)
 import Data.Set (Set, member)
 import Data.Time (diffUTCTime, getCurrentTime)
-import GHC (DynFlags, ModSummary(ms_hspp_file), ModuleName, Name, moduleName)
+import GHC (ModSummary(ms_hspp_file), DynFlags, ModuleName, Name, moduleName)
 import GHC.Core.ConLike (ConLike(PatSynCon))
 import GHC.Data.Bag (bagToList)
+import GHC.Hs.Extension (GhcRn)
+import GHC.Hs.ImpExp
+  ( ImportDecl(ideclAs, ideclExt, ideclImportList, ideclName, ideclQualified)
+  , XImportDeclPass(XImportDeclPass, ideclImplicit), LImportDecl
+  , isImportDeclQualified
+  )
 import GHC.Plugins
   ( GlobalRdrEltX(GRE, gre_imp, gre_name, gre_par), HasDynFlags(getDynFlags)
   , ImpDeclSpec(ImpDeclSpec, is_as, is_mod, is_qual), ImportSpec(is_decl)
@@ -32,20 +37,29 @@ import GHC.Plugins
   )
 import GHC.Tc.Utils.Env (tcLookupGlobal)
 import GHC.Tc.Utils.Monad
-  ( ImportAvails(imp_mods), TcGblEnv(tcg_imports, tcg_used_gres), MonadIO, TcM
-  , recoverM
+  ( ImportAvails(imp_mods), TcGblEnv(tcg_imports, tcg_rn_imports, tcg_used_gres)
+  , MonadIO, TcM, recoverM
   )
+import GHC.Types.SrcLoc (unLoc)
 import GHC.Types.TyThing (TyThing(AConLike))
 import GHC.Unit.Module.Imported
   ( ImportedBy(ImportedByUser), ImportedModsVal(imv_all_exports)
   )
+import Language.Haskell.Syntax.ImpExp
+  ( ImportDecl(ImportDecl), ImportListInterpretation(Exactly)
+  )
+import OM.Plugin.Imports.Format
+  ( ImportList(OpenImport), ImportStmt(ImportStmt)
+  , ImportStmtHead(ImportStmtHead), GroupKeyType, buildPartialImportList
+  , formatImportBlock, parentImportEntry
+  )
 import Prelude
-  ( Applicative(pure), Bool(False, True), Eq((==)), Foldable(elem)
-  , Maybe(Just, Nothing), Monoid(mempty), Num((+), (-)), Ord((>), (<=))
-  , Semigroup((<>)), Show(show), ($), (.), (<$>), (&&), (||), FilePath
-  , Int, String, break, concat, dropWhile, filter, length, lines, mapM, not
-  , otherwise, putStr, putStrLn, readFile, reverse, span, unlines, words
-  , writeFile
+  ( Applicative(pure), Bool(False, True), Eq((==))
+  , Foldable(elem, foldr, length), Maybe(Just, Nothing), Monoid(mempty)
+  , Num((+), (-)), Ord((<=), (>)), Semigroup((<>)), Show(show)
+  , Traversable(mapM), ($), (&&), (.), (<$>), (||), FilePath, Int, String, break
+  , concat, dropWhile, filter, lines, maybe, not, otherwise, putStr, putStrLn
+  , readFile, reverse, span, unlines, words, writeFile
   )
 import Safe (headMay)
 import qualified Data.Char as Char
@@ -53,7 +67,6 @@ import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-
 
 plugin :: Plugin
 plugin = defaultPlugin
@@ -353,7 +366,83 @@ getUsedImports env = do
     in
       mapM mkImport rawUsed
 
-  pure $ Map.unionsWith (Map.unionWith Set.union) [Map.singleton k v | (k, v) <- usedList]
+  let
+    usedFromNames :: Map ModuleImport (Map WrappedName (Set WrappedName))
+    usedFromNames =
+      Map.unionsWith (Map.unionWith Set.union) [Map.singleton k v | (k, v) <- usedList]
+
+    preservedEmptyImports :: [ModuleImport]
+    preservedEmptyImports =
+      getPreservedEmptyImports env
+  pure $
+    foldr
+      insertPreservedEmptyImport
+      usedFromNames
+      preservedEmptyImports
+
+
+insertPreservedEmptyImport
+  :: ModuleImport
+  -> Map ModuleImport (Map WrappedName (Set WrappedName))
+  -> Map ModuleImport (Map WrappedName (Set WrappedName))
+insertPreservedEmptyImport modImport used =
+  if Map.member modImport used then
+    used
+  else
+    Map.insert modImport mempty used
+
+
+getPreservedEmptyImports :: TcGblEnv -> [ModuleImport]
+getPreservedEmptyImports env =
+  [ modImport
+  | locDecl <- tcg_rn_imports env
+  , Just modImport <- [isEmptyUserImport locDecl]
+  ]
+
+
+isEmptyUserImport :: LImportDecl GhcRn -> Maybe ModuleImport
+isEmptyUserImport locDecl =
+  let
+    decl :: ImportDecl GhcRn
+    decl =
+      unLoc locDecl
+  in
+    case ideclExt decl of
+      XImportDeclPass { ideclImplicit = True } ->
+        Nothing
+      XImportDeclPass {} ->
+        case ideclImportList decl of
+          Just (Exactly, impList)
+            | List.null (unLoc impList) ->
+                Just (moduleImportFromDecl decl)
+          _ ->
+            Nothing
+
+
+moduleImportFromDecl :: ImportDecl GhcRn -> ModuleImport
+moduleImportFromDecl ImportDecl { ideclName, ideclQualified, ideclAs } =
+  let
+    isMod :: ModuleName
+    isMod =
+      unLoc ideclName
+
+    isQual :: Bool
+    isQual =
+      isImportDeclQualified ideclQualified
+
+    isAs :: ModuleName
+    isAs =
+      maybe isMod unLoc ideclAs
+  in
+    case (isQual, isAs == isMod) of
+      (True, True) ->
+        Qualified isMod
+      (True, False) ->
+        QualifiedAs isMod isAs
+      (False, True) ->
+        Unqualified isMod
+      (False, False) ->
+        UnqualifiedAs isMod isAs
 
 
 isPatternSynonym :: Name -> TcM Bool
@@ -397,29 +486,19 @@ renderNewImports
   -> Map ModuleImport (Map WrappedName (Set WrappedName))
   -> String
 renderNewImports options flags used =
-    unlines
-      [ case modImport of
-          Unqualified { name } ->
-            "import " <> shown name <> " (" <> showParents parents <> ")"
-          UnqualifiedAs { name, as } ->
-            "import " <> shown name <> " as "
-            <> shown as <> " (" <> showParents parents <> ")"
-          Qualified { name } ->
-            "import qualified " <> shown name
-            <> maybeShowList name parents
-          QualifiedAs { name, as } ->
-            "import qualified "
-            <> shown name <> " as " <> shown as
-            <> maybeShowList as parents
-      | (modImport, parents) <- Map.toAscList used
-      ]
-  where
-    maybeShowList :: ModuleName -> Map WrappedName (Set WrappedName) -> String
-    maybeShowList modName parents =
-      if options.excessive || modName `member` ambiguousNames
-        then " (" <> showParents parents <> ")"
-        else ""
+  formatImportBlock (buildImportStmts options flags used)
 
+
+buildImportStmts
+  :: Options
+  -> DynFlags
+  -> Map ModuleImport (Map WrappedName (Set WrappedName))
+  -> [ImportStmt]
+buildImportStmts options flags used =
+  [ ImportStmt (importHead modImport) (importList modImport parents)
+  | (modImport, parents) <- Map.toList used
+  ]
+  where
     ambiguousNames :: Set ModuleName
     ambiguousNames =
       Map.keysSet
@@ -427,46 +506,75 @@ renderNewImports options flags used =
       . Map.unionsWith (+)
       $ [ case modImport of
             Unqualified { name } -> Map.singleton name (1 :: Int)
-            UnqualifiedAs {as} -> Map.singleton as 1
+            UnqualifiedAs { as } -> Map.singleton as 1
             Qualified { name } -> Map.singleton name 1
             QualifiedAs { as } -> Map.singleton as 1
-        | (modImport, _) <- Map.toAscList used
+        | (modImport, _) <- Map.toList used
         ]
 
-    showParents :: Map WrappedName (Set WrappedName) -> String
-    showParents parents =
-      intercalate ", "
-        [ shownWrapped parent <> showChildren children
-        | (parent, children) <-
-            sortOn (\(parent_, _) -> shownWrapped parent_) (Map.toList parents)
+    importHead :: ModuleImport -> ImportStmtHead
+    importHead modImport =
+      case modImport of
+        Unqualified { name } ->
+          ImportStmtHead False (shown name) Nothing
+        UnqualifiedAs { name, as } ->
+          ImportStmtHead False (shown name) (Just (shown as))
+        Qualified { name } ->
+          ImportStmtHead True (shown name) Nothing
+        QualifiedAs { name, as } ->
+          ImportStmtHead True (shown name) (Just (shown as))
+
+    importList
+      :: ModuleImport
+      -> Map WrappedName (Set WrappedName)
+      -> ImportList
+    importList modImport parents =
+      case modImport of
+        Unqualified {} ->
+          buildPartialImportList (parentEntries parents)
+        UnqualifiedAs {} ->
+          buildPartialImportList (parentEntries parents)
+        Qualified { name } ->
+          if options.excessive || name `member` ambiguousNames then
+            buildPartialImportList (parentEntries parents)
+          else
+            OpenImport
+        QualifiedAs { as } ->
+          if options.excessive || as `member` ambiguousNames then
+            buildPartialImportList (parentEntries parents)
+          else
+            OpenImport
+
+    parentEntries
+      :: Map WrappedName (Set WrappedName)
+      -> Map GroupKeyType (Set String)
+    parentEntries parents =
+      Map.fromListWith Set.union
+        [ parentImportEntry
+            (shown name)
+            isPat
+            (Set.map shownChild children)
+        | (WrappedName name isPat, children) <- Map.toList parents
         ]
 
-    showChildren :: Set WrappedName -> String
-    showChildren children =
-      if Set.null children then
-        ""
-      else
-        let
-          sorted :: [WrappedName]
-          sorted = sortOn shownWrapped (Set.toList children)
-        in
-          "(" <> intercalate ", " (shownWrapped <$> sorted) <> ")"
-
-    shownWrapped :: WrappedName -> String
-    shownWrapped (WrappedName name isPat) =
-      let s = shown name in
-      if isPat then "pattern " <> s else s
+    shownChild :: WrappedName -> String
+    shownChild (WrappedName name _) =
+      shown name
 
     shown :: Outputable o => o -> String
-    shown = fixInlineName . showSDoc flags . ppr
+    shown =
+      fixInlineName . showSDoc flags . ppr
 
     fixInlineName :: String -> String
     fixInlineName name =
       case headMay name of
-        Nothing -> name
+        Nothing ->
+          name
         Just c
-          | Char.isAlphaNum c || c == '_' -> name
-          | otherwise -> "(" <> name <> ")"
+          | Char.isAlphaNum c || c == '_' ->
+              name
+          | otherwise ->
+              "(" <> name <> ")"
 
 
 parseOptions :: [CommandLineOption] -> Options

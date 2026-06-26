@@ -1,6 +1,6 @@
 cabal-version:       3.0
 name:                om-plugin-imports
-version:             0.4.1.1.9.14
+version:             0.4.2.0.9.14
 synopsis:            Plugin-based explicit import generation.
 description:         See the README at https://github.com/owensmurray/om-plugin-imports/tree/master/#om-plugin-imports
 homepage:            https://github.com/owensmurray/om-plugin-imports
@@ -36,8 +36,8 @@ library
   import: dependencies, warnings
   exposed-modules:
     OM.Plugin.Imports
-  -- other-modules:
-  -- other-extensions:
+  other-modules:
+    OM.Plugin.Imports.Format
   hs-source-dirs:      src
   default-language:    Haskell2010
 

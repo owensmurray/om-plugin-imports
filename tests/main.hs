@@ -2,7 +2,6 @@
 module Main (main) where
 
 import Control.Monad (void)
-import Data.List (isSuffixOf, sort)
 import GHC
   ( DynFlags(backend, ghcLink, importPaths), GhcLink(NoLink)
   , GhcMonad(getSession, setSession), LoadHowMuch(LoadAllTargets)
@@ -12,26 +11,45 @@ import GHC
 import GHC.Driver.Backend (noBackend)
 import GHC.Driver.Env (HscEnv(hsc_plugins))
 import GHC.Driver.Plugins
-  ( StaticPlugin(StaticPlugin, spInitialised, spPlugin)
-  , PluginWithArgs(PluginWithArgs)
-  , Plugins(staticPlugins)
+  ( PluginWithArgs(PluginWithArgs), Plugins(staticPlugins)
+  , StaticPlugin(StaticPlugin, spInitialised, spPlugin)
   )
-import System.Directory (copyFile, createDirectoryIfMissing, listDirectory)
-import System.FilePath (takeDirectory, (<.>), (</>), takeBaseName, takeFileName)
+import Prelude
+  ( Bool(False, True), Maybe(Just, Nothing), Monad(return), Semigroup((<>)), ($)
+  , FilePath, IO, String, init
+  )
+import System.Directory (copyFile, createDirectoryIfMissing)
+import System.FilePath ((<.>), (</>), takeBaseName, takeDirectory, takeFileName)
 import System.Process (readProcess)
-import Test.Tasty (defaultMain, TestTree, testGroup)
+import Test.Tasty (TestTree, defaultMain, testGroup)
 import Test.Tasty.Golden (goldenVsFileDiff)
 import qualified OM.Plugin.Imports as Plugin
 
 main :: IO ()
 main = do
   libdir <- initGhc
-  testFiles <- findTestFiles
   defaultMain
     ( testGroup
         "Tests"
-        [ testGroup "Golden Tests" (mkTest libdir <$> testFiles)
-        , mkInPlaceTest libdir "tests/samples/Basic.hs"
+        [ testGroup
+            "Golden Tests"
+            [ mkTest libdir "tests/samples/AmbiguousUser.hs"
+            , mkTest libdir "tests/samples/Basic.hs"
+            , mkTest libdir "tests/samples/EnumPatImport.hs"
+            , mkTest libdir "tests/samples/LongImport.hs"
+            , mkTest libdir "tests/samples/PatternSynonym.hs"
+            , mkTest libdir "tests/samples/Qualified.hs"
+            ]
+        , testGroup
+            "In-Place Tests"
+            [ mkInPlaceTest libdir "tests/samples/Basic.hs"
+            , mkInPlaceTest libdir "tests/samples/LongImport.hs"
+            , mkInPlaceTest libdir "tests/samples/PatternSynonym.hs"
+            , mkDoubleInPlaceTest libdir "tests/samples/PatternSynonym.hs"
+            , mkInPlaceTest libdir "tests/samples/EnumPatImport.hs"
+            , mkDoubleInPlaceTest libdir "tests/samples/EnumPatImport.hs"
+            , mkInPlaceTest libdir "tests/samples/OrphanInstanceImport.hs"
+            ]
         ]
     )
 
@@ -40,21 +58,6 @@ initGhc :: IO FilePath
 initGhc = do
   out <- readProcess "ghc" ["--print-libdir"] ""
   return (init out)
-
-
-findTestFiles :: IO [FilePath]
-findTestFiles = do
-  files <- listDirectory "tests/samples"
-  return $ sort
-    [ "tests/samples" </> f
-    | f <- files
-    , ".hs" `isSuffixOf` f
-    , f `notElem`
-        [ "PatternSynonymDef.hs"
-        , "AmbiguousA.hs"
-        , "AmbiguousB.hs"
-        ]
-    ]
 
 
 mkTest :: FilePath -> FilePath -> TestTree
@@ -82,6 +85,29 @@ mkInPlaceTest libdir srcFile =
     goldenFile = "tests/golden" </> (takeBaseName srcFile <.> "in-place.hs")
     outDir = "tests/tmp"
     outFile = outDir </> takeFileName srcFile
+
+
+mkDoubleInPlaceTest :: FilePath -> FilePath -> TestTree
+mkDoubleInPlaceTest libdir srcFile =
+  goldenVsFileDiff
+    (takeBaseName srcFile <> " double in-place")
+    (\ref new -> ["diff", "-u", ref, new])
+    goldenFile
+    outFile
+    (runDoubleInPlaceGhcPlugin libdir srcFile outFile)
+  where
+    goldenFile =
+      "tests/golden" </> (takeBaseName srcFile <.> "double-in-place.hs")
+    outDir = "tests/tmp"
+    outFile = outDir </> (takeBaseName srcFile <> "-double" <.> "hs")
+
+
+runDoubleInPlaceGhcPlugin :: FilePath -> FilePath -> FilePath -> IO ()
+runDoubleInPlaceGhcPlugin libdir srcFile outFile = do
+  createDirectoryIfMissing True (takeDirectory outFile)
+  copyFile srcFile outFile
+  runGhcPluginWithArgs libdir ["in-place"] outFile
+  runGhcPluginWithArgs libdir ["in-place"] outFile
 
 
 runGhcPlugin :: FilePath -> FilePath -> IO ()
