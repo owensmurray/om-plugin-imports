@@ -23,6 +23,7 @@ import Test.Tasty (defaultMain, TestTree, testGroup)
 import Test.Tasty.Golden (goldenVsFileDiff)
 import qualified OM.Plugin.Imports as Plugin
 
+
 main :: IO ()
 main = do
   libdir <- initGhc
@@ -31,7 +32,14 @@ main = do
     ( testGroup
         "Tests"
         [ testGroup "Golden Tests" (mkTest libdir <$> testFiles)
-        , mkInPlaceTest libdir "tests/samples/Basic.hs"
+        , testGroup
+            "In-Place Tests"
+            [ mkInPlaceTest libdir "tests/samples/Basic.hs"
+            , mkInPlaceTest libdir "tests/samples/PatternSynonym.hs"
+            , mkDoubleInPlaceTest libdir "tests/samples/PatternSynonym.hs"
+            , mkInPlaceTest libdir "tests/samples/EnumPatImport.hs"
+            , mkDoubleInPlaceTest libdir "tests/samples/EnumPatImport.hs"
+            ]
         ]
     )
 
@@ -53,6 +61,7 @@ findTestFiles = do
         [ "PatternSynonymDef.hs"
         , "AmbiguousA.hs"
         , "AmbiguousB.hs"
+        , "EnumPatDef.hs"
         ]
     ]
 
@@ -82,6 +91,29 @@ mkInPlaceTest libdir srcFile =
     goldenFile = "tests/golden" </> (takeBaseName srcFile <.> "in-place.hs")
     outDir = "tests/tmp"
     outFile = outDir </> takeFileName srcFile
+
+
+mkDoubleInPlaceTest :: FilePath -> FilePath -> TestTree
+mkDoubleInPlaceTest libdir srcFile =
+  goldenVsFileDiff
+    (takeBaseName srcFile <> " double in-place")
+    (\ref new -> ["diff", "-u", ref, new])
+    goldenFile
+    outFile
+    (runDoubleInPlaceGhcPlugin libdir srcFile outFile)
+  where
+    goldenFile =
+      "tests/golden" </> (takeBaseName srcFile <.> "double-in-place.hs")
+    outDir = "tests/tmp"
+    outFile = outDir </> (takeBaseName srcFile <> "-double" <.> "hs")
+
+
+runDoubleInPlaceGhcPlugin :: FilePath -> FilePath -> FilePath -> IO ()
+runDoubleInPlaceGhcPlugin libdir srcFile outFile = do
+  createDirectoryIfMissing True (takeDirectory outFile)
+  copyFile srcFile outFile
+  runGhcPluginWithArgs libdir ["in-place"] outFile
+  runGhcPluginWithArgs libdir ["in-place"] outFile
 
 
 runGhcPlugin :: FilePath -> FilePath -> IO ()

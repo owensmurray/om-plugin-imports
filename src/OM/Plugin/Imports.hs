@@ -436,9 +436,9 @@ renderNewImports options flags used =
     showParents :: Map WrappedName (Set WrappedName) -> String
     showParents parents =
       intercalate ", "
-        [ shownWrapped parent <> showChildren children
+        [ shownTopLevel parent <> showChildren children
         | (parent, children) <-
-            sortOn (\(parent_, _) -> shownWrapped parent_) (Map.toList parents)
+            sortOn (\(parent_, _) -> shownTopLevel parent_) (Map.toList parents)
         ]
 
     showChildren :: Set WrappedName -> String
@@ -448,14 +448,18 @@ renderNewImports options flags used =
       else
         let
           sorted :: [WrappedName]
-          sorted = sortOn shownWrapped (Set.toList children)
+          sorted = sortOn shownChild (Set.toList children)
         in
-          "(" <> intercalate ", " (shownWrapped <$> sorted) <> ")"
+          "(" <> intercalate ", " (shownChild <$> sorted) <> ")"
 
-    shownWrapped :: WrappedName -> String
-    shownWrapped (WrappedName name isPat) =
+    shownTopLevel :: WrappedName -> String
+    shownTopLevel (WrappedName name isPat) =
       let s = shown name in
       if isPat then "pattern " <> s else s
+
+    shownChild :: WrappedName -> String
+    shownChild (WrappedName name _) =
+      shown name
 
     shown :: Outputable o => o -> String
     shown = fixInlineName . showSDoc flags . ppr
