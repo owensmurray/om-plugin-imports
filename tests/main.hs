@@ -2,26 +2,17 @@
 module Main (main) where
 
 import Control.Monad (void)
-import GHC
-  ( DynFlags(backend, ghcLink, importPaths), GhcLink(NoLink)
-  , GhcMonad(getSession, setSession), LoadHowMuch(LoadAllTargets)
-  , getSessionDynFlags, guessTarget, load, runGhc, setSessionDynFlags
-  , setTargets
-  )
+import GHC (guessTarget, runGhc, setSessionDynFlags, setTargets, load, getSessionDynFlags, DynFlags(backend, ghcLink, importPaths), GhcLink(NoLink), LoadHowMuch(LoadAllTargets), GhcMonad(getSession, setSession))
 import GHC.Driver.Backend (noBackend)
 import GHC.Driver.Env (HscEnv(hsc_plugins))
-import GHC.Driver.Plugins
-  ( StaticPlugin(StaticPlugin, spInitialised, spPlugin)
-  , PluginWithArgs(PluginWithArgs)
-  , Plugins(staticPlugins)
-  )
+import GHC.Driver.Plugins (PluginWithArgs(PluginWithArgs), Plugins(staticPlugins), StaticPlugin(StaticPlugin, spInitialised, spPlugin))
+import Prelude (($), Monad(return), Semigroup((<>)), Bool(False, True), String, Maybe(Nothing, Just), IO, init, FilePath)
 import System.Directory (copyFile, createDirectoryIfMissing)
-import System.FilePath (takeDirectory, (<.>), (</>), takeBaseName, takeFileName)
+import System.FilePath ((<.>), (</>), takeBaseName, takeDirectory, takeFileName)
 import System.Process (readProcess)
-import Test.Tasty (defaultMain, TestTree, testGroup)
+import Test.Tasty (defaultMain, testGroup, TestTree)
 import Test.Tasty.Golden (goldenVsFileDiff)
 import qualified OM.Plugin.Imports as Plugin
-
 
 main :: IO ()
 main = do
@@ -46,6 +37,7 @@ main = do
             , mkDoubleInPlaceTest libdir "tests/samples/PatternSynonym.hs"
             , mkInPlaceTest libdir "tests/samples/EnumPatImport.hs"
             , mkDoubleInPlaceTest libdir "tests/samples/EnumPatImport.hs"
+            , mkInPlaceTest libdir "tests/samples/OrphanInstanceImport.hs"
             ]
         ]
     )

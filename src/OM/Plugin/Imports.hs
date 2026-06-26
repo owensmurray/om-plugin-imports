@@ -15,54 +15,29 @@ module OM.Plugin.Imports (
 import Control.Exception (evaluate)
 import Control.Monad (void)
 import Data.IORef (readIORef)
-import Data.List ()
 import Data.Map (Map)
 import Data.Set (Set, member)
 import Data.Time (diffUTCTime, getCurrentTime)
-import GHC (DynFlags, ModSummary(ms_hspp_file), ModuleName, Name, moduleName)
+import GHC (DynFlags, Name, ModSummary(ms_hspp_file), moduleName, ModuleName)
 import GHC.Core.ConLike (ConLike(PatSynCon))
 import GHC.Data.Bag (bagToList)
-import GHC.Plugins
-  ( GlobalRdrEltX(GRE, gre_imp, gre_name, gre_par), HasDynFlags(getDynFlags)
-  , ImpDeclSpec(ImpDeclSpec, is_as, is_mod, is_qual), ImportSpec(is_decl)
-  , Outputable(ppr), Parent(NoParent, ParentIs)
-  , Plugin(pluginRecompile, typeCheckResultAction)
-  , PluginRecompile(NoForceRecompile), CommandLineOption, GlobalRdrElt
-  , bestImport, defaultPlugin, liftIO, nonDetOccEnvElts, showSDoc
-  )
+import GHC.Hs.Extension (GhcRn)
+import GHC.Hs.ImpExp (isImportDeclQualified, XImportDeclPass(XImportDeclPass, ideclImplicit), ImportDecl(ideclAs, ideclExt, ideclImportList, ideclName, ideclQualified), LImportDecl)
+import GHC.Plugins (Plugin(pluginRecompile, typeCheckResultAction), Outputable(ppr), defaultPlugin, showSDoc, nonDetOccEnvElts, bestImport, HasDynFlags(getDynFlags), CommandLineOption, PluginRecompile(NoForceRecompile), GlobalRdrElt, GlobalRdrEltX(GRE, gre_imp, gre_name, gre_par), ImpDeclSpec(ImpDeclSpec, is_as, is_mod, is_qual), ImportSpec(is_decl), Parent(NoParent, ParentIs), liftIO)
 import GHC.Tc.Utils.Env (tcLookupGlobal)
-import GHC.Tc.Utils.Monad
-  ( ImportAvails(imp_mods), TcGblEnv(tcg_imports, tcg_used_gres), MonadIO, TcM
-  , recoverM
-  )
+import GHC.Tc.Utils.Monad (MonadIO, recoverM, TcGblEnv(tcg_imports, tcg_rn_imports, tcg_used_gres), TcM, ImportAvails(imp_mods))
+import GHC.Types.SrcLoc (unLoc)
 import GHC.Types.TyThing (TyThing(AConLike))
-import GHC.Unit.Module.Imported
-  ( ImportedBy(ImportedByUser), ImportedModsVal(imv_all_exports)
-  )
-import Prelude
-  ( Applicative(pure), Bool(False, True), Eq((==)), Foldable(elem)
-  , Maybe(Just, Nothing), Monoid(mempty), Num((+), (-)), Ord((>), (<=))
-  , Semigroup((<>)), Show(show), ($), (.), (<$>), (&&), (||), FilePath
-  , Int, String, break, concat, dropWhile, filter, length, lines, mapM, not
-  , otherwise, putStr, putStrLn, readFile, reverse, span, unlines, words
-  , writeFile
-  )
-import OM.Plugin.Imports.Format
-  ( GroupKeyType
-  , ImportList (OpenImport)
-  , ImportStmt (ImportStmt)
-  , ImportStmtHead (ImportStmtHead)
-  , buildPartialImportList
-  , formatImportBlock
-  , parentImportEntry
-  )
+import GHC.Unit.Module.Imported (ImportedBy(ImportedByUser), ImportedModsVal(imv_all_exports))
+import Language.Haskell.Syntax.ImpExp (ImportDecl(ImportDecl), ImportListInterpretation(Exactly))
+import OM.Plugin.Imports.Format (buildPartialImportList, formatImportBlock, parentImportEntry, GroupKeyType, ImportList(OpenImport), ImportStmt(ImportStmt), ImportStmtHead(ImportStmtHead))
+import Prelude (filter, otherwise, ($), Eq((==)), Num((-), (+)), Ord((>), (<=)), Show(show), Applicative(pure), Foldable(elem, foldr, length), Traversable(mapM), Semigroup((<>)), Monoid(mempty), Bool(False, True), String, Int, Maybe(Nothing, Just), unlines, (&&), not, (||), concat, lines, words, break, dropWhile, reverse, span, (.), (<$>), maybe, putStr, putStrLn, readFile, writeFile, FilePath)
 import Safe (headMay)
 import qualified Data.Char as Char
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-
 
 plugin :: Plugin
 plugin = defaultPlugin
@@ -362,7 +337,83 @@ getUsedImports env = do
     in
       mapM mkImport rawUsed
 
-  pure $ Map.unionsWith (Map.unionWith Set.union) [Map.singleton k v | (k, v) <- usedList]
+  let
+    usedFromNames :: Map ModuleImport (Map WrappedName (Set WrappedName))
+    usedFromNames =
+      Map.unionsWith (Map.unionWith Set.union) [Map.singleton k v | (k, v) <- usedList]
+
+    preservedEmptyImports :: [ModuleImport]
+    preservedEmptyImports =
+      getPreservedEmptyImports env
+  pure $
+    foldr
+      insertPreservedEmptyImport
+      usedFromNames
+      preservedEmptyImports
+
+
+insertPreservedEmptyImport
+  :: ModuleImport
+  -> Map ModuleImport (Map WrappedName (Set WrappedName))
+  -> Map ModuleImport (Map WrappedName (Set WrappedName))
+insertPreservedEmptyImport modImport used =
+  if Map.member modImport used then
+    used
+  else
+    Map.insert modImport mempty used
+
+
+getPreservedEmptyImports :: TcGblEnv -> [ModuleImport]
+getPreservedEmptyImports env =
+  [ modImport
+  | locDecl <- tcg_rn_imports env
+  , Just modImport <- [isEmptyUserImport locDecl]
+  ]
+
+
+isEmptyUserImport :: LImportDecl GhcRn -> Maybe ModuleImport
+isEmptyUserImport locDecl =
+  let
+    decl :: ImportDecl GhcRn
+    decl =
+      unLoc locDecl
+  in
+    case ideclExt decl of
+      XImportDeclPass { ideclImplicit = True } ->
+        Nothing
+      XImportDeclPass {} ->
+        case ideclImportList decl of
+          Just (Exactly, impList)
+            | List.null (unLoc impList) ->
+                Just (moduleImportFromDecl decl)
+          _ ->
+            Nothing
+
+
+moduleImportFromDecl :: ImportDecl GhcRn -> ModuleImport
+moduleImportFromDecl ImportDecl { ideclName, ideclQualified, ideclAs } =
+  let
+    isMod :: ModuleName
+    isMod =
+      unLoc ideclName
+
+    isQual :: Bool
+    isQual =
+      isImportDeclQualified ideclQualified
+
+    isAs :: ModuleName
+    isAs =
+      maybe isMod unLoc ideclAs
+  in
+    case (isQual, isAs == isMod) of
+      (True, True) ->
+        Qualified isMod
+      (True, False) ->
+        QualifiedAs isMod isAs
+      (False, True) ->
+        Unqualified isMod
+      (False, False) ->
+        UnqualifiedAs isMod isAs
 
 
 isPatternSynonym :: Name -> TcM Bool
