@@ -2,7 +2,7 @@ module Basic where
 
 import Data.List (intercalate)
 import Data.Maybe (catMaybes, mapMaybe)
-import Prelude (Char, Foldable(foldl'), Int, Maybe, Num((+)), id)
+import Prelude (Foldable(foldl'), Num((+)), Char, Int, Maybe, id)
 
 foo :: [Int] -> Int
 foo = foldl' (+) 0

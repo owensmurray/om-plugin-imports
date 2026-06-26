@@ -35,6 +35,7 @@ main = do
         , testGroup
             "In-Place Tests"
             [ mkInPlaceTest libdir "tests/samples/Basic.hs"
+            , mkInPlaceTest libdir "tests/samples/LongImport.hs"
             , mkInPlaceTest libdir "tests/samples/PatternSynonym.hs"
             , mkDoubleInPlaceTest libdir "tests/samples/PatternSynonym.hs"
             , mkInPlaceTest libdir "tests/samples/EnumPatImport.hs"

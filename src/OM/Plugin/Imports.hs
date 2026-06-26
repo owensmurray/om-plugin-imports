@@ -15,7 +15,7 @@ module OM.Plugin.Imports (
 import Control.Exception (evaluate)
 import Control.Monad (void)
 import Data.IORef (readIORef)
-import Data.List (intercalate, sortOn)
+import Data.List ()
 import Data.Map (Map)
 import Data.Set (Set, member)
 import Data.Time (diffUTCTime, getCurrentTime)
@@ -46,6 +46,15 @@ import Prelude
   , Int, String, break, concat, dropWhile, filter, length, lines, mapM, not
   , otherwise, putStr, putStrLn, readFile, reverse, span, unlines, words
   , writeFile
+  )
+import OM.Plugin.Imports.Format
+  ( GroupKeyType
+  , ImportList (OpenImport)
+  , ImportStmt (ImportStmt)
+  , ImportStmtHead (ImportStmtHead)
+  , buildPartialImportList
+  , formatImportBlock
+  , parentImportEntry
   )
 import Safe (headMay)
 import qualified Data.Char as Char
@@ -397,29 +406,19 @@ renderNewImports
   -> Map ModuleImport (Map WrappedName (Set WrappedName))
   -> String
 renderNewImports options flags used =
-    unlines
-      [ case modImport of
-          Unqualified { name } ->
-            "import " <> shown name <> " (" <> showParents parents <> ")"
-          UnqualifiedAs { name, as } ->
-            "import " <> shown name <> " as "
-            <> shown as <> " (" <> showParents parents <> ")"
-          Qualified { name } ->
-            "import qualified " <> shown name
-            <> maybeShowList name parents
-          QualifiedAs { name, as } ->
-            "import qualified "
-            <> shown name <> " as " <> shown as
-            <> maybeShowList as parents
-      | (modImport, parents) <- Map.toAscList used
-      ]
-  where
-    maybeShowList :: ModuleName -> Map WrappedName (Set WrappedName) -> String
-    maybeShowList modName parents =
-      if options.excessive || modName `member` ambiguousNames
-        then " (" <> showParents parents <> ")"
-        else ""
+  formatImportBlock (buildImportStmts options flags used)
 
+
+buildImportStmts
+  :: Options
+  -> DynFlags
+  -> Map ModuleImport (Map WrappedName (Set WrappedName))
+  -> [ImportStmt]
+buildImportStmts options flags used =
+  [ ImportStmt (importHead modImport) (importList modImport parents)
+  | (modImport, parents) <- Map.toList used
+  ]
+  where
     ambiguousNames :: Set ModuleName
     ambiguousNames =
       Map.keysSet
@@ -427,50 +426,75 @@ renderNewImports options flags used =
       . Map.unionsWith (+)
       $ [ case modImport of
             Unqualified { name } -> Map.singleton name (1 :: Int)
-            UnqualifiedAs {as} -> Map.singleton as 1
+            UnqualifiedAs { as } -> Map.singleton as 1
             Qualified { name } -> Map.singleton name 1
             QualifiedAs { as } -> Map.singleton as 1
-        | (modImport, _) <- Map.toAscList used
+        | (modImport, _) <- Map.toList used
         ]
 
-    showParents :: Map WrappedName (Set WrappedName) -> String
-    showParents parents =
-      intercalate ", "
-        [ shownTopLevel parent <> showChildren children
-        | (parent, children) <-
-            sortOn (\(parent_, _) -> shownTopLevel parent_) (Map.toList parents)
+    importHead :: ModuleImport -> ImportStmtHead
+    importHead modImport =
+      case modImport of
+        Unqualified { name } ->
+          ImportStmtHead False (shown name) Nothing
+        UnqualifiedAs { name, as } ->
+          ImportStmtHead False (shown name) (Just (shown as))
+        Qualified { name } ->
+          ImportStmtHead True (shown name) Nothing
+        QualifiedAs { name, as } ->
+          ImportStmtHead True (shown name) (Just (shown as))
+
+    importList
+      :: ModuleImport
+      -> Map WrappedName (Set WrappedName)
+      -> ImportList
+    importList modImport parents =
+      case modImport of
+        Unqualified {} ->
+          buildPartialImportList (parentEntries parents)
+        UnqualifiedAs {} ->
+          buildPartialImportList (parentEntries parents)
+        Qualified { name } ->
+          if options.excessive || name `member` ambiguousNames then
+            buildPartialImportList (parentEntries parents)
+          else
+            OpenImport
+        QualifiedAs { as } ->
+          if options.excessive || as `member` ambiguousNames then
+            buildPartialImportList (parentEntries parents)
+          else
+            OpenImport
+
+    parentEntries
+      :: Map WrappedName (Set WrappedName)
+      -> Map GroupKeyType (Set String)
+    parentEntries parents =
+      Map.fromListWith Set.union
+        [ parentImportEntry
+            (shown name)
+            isPat
+            (Set.map shownChild children)
+        | (WrappedName name isPat, children) <- Map.toList parents
         ]
-
-    showChildren :: Set WrappedName -> String
-    showChildren children =
-      if Set.null children then
-        ""
-      else
-        let
-          sorted :: [WrappedName]
-          sorted = sortOn shownChild (Set.toList children)
-        in
-          "(" <> intercalate ", " (shownChild <$> sorted) <> ")"
-
-    shownTopLevel :: WrappedName -> String
-    shownTopLevel (WrappedName name isPat) =
-      let s = shown name in
-      if isPat then "pattern " <> s else s
 
     shownChild :: WrappedName -> String
     shownChild (WrappedName name _) =
       shown name
 
     shown :: Outputable o => o -> String
-    shown = fixInlineName . showSDoc flags . ppr
+    shown =
+      fixInlineName . showSDoc flags . ppr
 
     fixInlineName :: String -> String
     fixInlineName name =
       case headMay name of
-        Nothing -> name
+        Nothing ->
+          name
         Just c
-          | Char.isAlphaNum c || c == '_' -> name
-          | otherwise -> "(" <> name <> ")"
+          | Char.isAlphaNum c || c == '_' ->
+              name
+          | otherwise ->
+              "(" <> name <> ")"
 
 
 parseOptions :: [CommandLineOption] -> Options
