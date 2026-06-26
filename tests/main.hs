@@ -2,7 +2,6 @@
 module Main (main) where
 
 import Control.Monad (void)
-import Data.List (isSuffixOf, sort)
 import GHC
   ( DynFlags(backend, ghcLink, importPaths), GhcLink(NoLink)
   , GhcMonad(getSession, setSession), LoadHowMuch(LoadAllTargets)
@@ -16,7 +15,7 @@ import GHC.Driver.Plugins
   , PluginWithArgs(PluginWithArgs)
   , Plugins(staticPlugins)
   )
-import System.Directory (copyFile, createDirectoryIfMissing, listDirectory)
+import System.Directory (copyFile, createDirectoryIfMissing)
 import System.FilePath (takeDirectory, (<.>), (</>), takeBaseName, takeFileName)
 import System.Process (readProcess)
 import Test.Tasty (defaultMain, TestTree, testGroup)
@@ -27,11 +26,18 @@ import qualified OM.Plugin.Imports as Plugin
 main :: IO ()
 main = do
   libdir <- initGhc
-  testFiles <- findTestFiles
   defaultMain
     ( testGroup
         "Tests"
-        [ testGroup "Golden Tests" (mkTest libdir <$> testFiles)
+        [ testGroup
+            "Golden Tests"
+            [ mkTest libdir "tests/samples/AmbiguousUser.hs"
+            , mkTest libdir "tests/samples/Basic.hs"
+            , mkTest libdir "tests/samples/EnumPatImport.hs"
+            , mkTest libdir "tests/samples/LongImport.hs"
+            , mkTest libdir "tests/samples/PatternSynonym.hs"
+            , mkTest libdir "tests/samples/Qualified.hs"
+            ]
         , testGroup
             "In-Place Tests"
             [ mkInPlaceTest libdir "tests/samples/Basic.hs"
@@ -49,22 +55,6 @@ initGhc :: IO FilePath
 initGhc = do
   out <- readProcess "ghc" ["--print-libdir"] ""
   return (init out)
-
-
-findTestFiles :: IO [FilePath]
-findTestFiles = do
-  files <- listDirectory "tests/samples"
-  return $ sort
-    [ "tests/samples" </> f
-    | f <- files
-    , ".hs" `isSuffixOf` f
-    , f `notElem`
-        [ "PatternSynonymDef.hs"
-        , "AmbiguousA.hs"
-        , "AmbiguousB.hs"
-        , "EnumPatDef.hs"
-        ]
-    ]
 
 
 mkTest :: FilePath -> FilePath -> TestTree
